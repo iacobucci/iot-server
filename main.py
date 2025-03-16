@@ -50,7 +50,7 @@ async def get_status():
     global lamp
     if not lamp:
         return LampStatus(connected=False)
-    return LampStatus(connected=True, power=lamp.is_on(), brightness=lamp.get_brightness())
+    return LampStatus(connected=True, power=lamp.get_power(), brightness=lamp.get_brightness())
 
 @app.get("/power", response_model=LampStatus)
 async def set_power(request: PowerRequest):
@@ -74,7 +74,7 @@ async def set_brightness(request: BrightnessRequest):
     
     try:
         # Ensure lamp is on before setting brightness
-        if not lamp.is_on():
+        if not lamp.get_power():
             await lamp.set_power(True)
         
         await lamp.set_brightness(request.brightness)
