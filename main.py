@@ -6,7 +6,7 @@ from typing import Optional
 from contextlib import asynccontextmanager
 
 # Import the Lamp class from your init file
-from libhueble import Lamp
+from __init__ import Lamp
 
 # Global lamp instance
 lamp = None
@@ -50,9 +50,14 @@ async def get_status():
     global lamp
     if not lamp:
         return LampStatus(connected=False)
-    return LampStatus(connected=True, power=lamp.get_power(), brightness=lamp.get_brightness())
+    
+    # Await the coroutine methods
+    power = await lamp.get_power()
+    brightness = await lamp.get_brightness()
+    
+    return LampStatus(connected=True, power=power, brightness=brightness)
 
-@app.get("/power", response_model=LampStatus)
+@app.post("/power", response_model=LampStatus)
 async def set_power(request: PowerRequest):
     """Turn the lamp on or off."""
     global lamp
@@ -61,11 +66,14 @@ async def set_power(request: PowerRequest):
     
     try:
         await lamp.set_power(request.power)
-        return LampStatus(connected=True, power=request.power, brightness=lamp.get_brightness())
+        # Await the coroutine methods
+        power = await lamp.get_power()
+        brightness = await lamp.get_brightness()
+        return LampStatus(connected=True, power=power, brightness=brightness)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to set power: {str(e)}")
 
-@app.get("/brightness", response_model=LampStatus)
+@app.post("/brightness", response_model=LampStatus)
 async def set_brightness(request: BrightnessRequest):
     """Set the brightness of the lamp."""
     global lamp
@@ -73,12 +81,18 @@ async def set_brightness(request: BrightnessRequest):
         raise HTTPException(status_code=503, detail="Lamp not connected")
     
     try:
-        # Ensure lamp is on before setting brightness
-        if not lamp.get_power():
+        # Check if lamp is on before setting brightness
+        power = await lamp.get_power()
+        if not power:
             await lamp.set_power(True)
         
         await lamp.set_brightness(request.brightness)
-        return LampStatus(connected=True, power=True, brightness=request.brightness)
+        
+        # Get updated values
+        updated_power = await lamp.get_power()
+        updated_brightness = await lamp.get_brightness()
+        
+        return LampStatus(connected=True, power=updated_power, brightness=updated_brightness)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to set brightness: {str(e)}")
 
