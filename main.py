@@ -6,7 +6,7 @@ from typing import Optional
 from contextlib import asynccontextmanager
 
 # Import the Lamp class from your init file
-from __init__ import Lamp
+from libhueble import Lamp
 
 # Global lamp instance
 lamp = None
