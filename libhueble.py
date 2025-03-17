@@ -1,3 +1,6 @@
+#!/usr/bin/env python3
+# https://github.com/alexhorn/libhueble
+
 from bleak import BleakClient
 from rgbxy import Converter, GamutC, get_light_gamut
 from struct import pack, unpack
