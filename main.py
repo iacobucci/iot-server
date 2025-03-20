@@ -16,7 +16,7 @@ lamp = None
 async def lifespan(app: FastAPI):
     global lamp
     # Initialize lamp and connect on startup
-    lamp = Lamp("F0:A9:51:9C:4E:96")
+    lamp = Lamp("C9:61:84:F3:7C:3E")
     try:
         await lamp.connect()
         print("Connected to lamp")
