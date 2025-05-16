@@ -1,3 +1,4 @@
+import os
 import asyncio
 import uvicorn
 from fastapi import FastAPI, HTTPException
@@ -16,7 +17,7 @@ lamp = None
 async def lifespan(app: FastAPI):
     global lamp
     # Initialize lamp and connect on startup
-    lamp = Lamp("F0:A9:51:9C:4E:96")
+    lamp = Lamp(os.environ["LAMP"])
     try:
         await lamp.connect()
         print("Connected to lamp")
