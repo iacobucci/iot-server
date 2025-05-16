@@ -43,4 +43,4 @@ esac
 exit $?
 ```
 
-Or with my [launchpad-daemon](https://github.com/iacobucci/launchpad-dameon).
+Or with my [launchpad-daemon](https://github.com/iacobucci/launchpad-daemon).
