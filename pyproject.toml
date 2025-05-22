@@ -7,8 +7,6 @@ requires-python = ">=3.9"
 dependencies = [
 	"fastapi (>=0.115.11,<0.116.0)",
 	"uvicorn (>=0.34.0,<0.35.0)",
-	"bleak (==0.11.0)",
-	"rgbxy @ git+https://github.com/benknight/hue-python-rgb-converter.git@f73a4ec#egg=rgbxy",
 	"paho-mqtt (>=2.1.0,<3.0.0)",
 ]
 
