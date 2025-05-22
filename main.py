@@ -76,14 +76,14 @@ async def get_status():
 @app.post("/power", response_model=LampStatus)
 async def set_power(request: PowerRequest):
     state = "ON" if request.power else "OFF"
-    publish_mqtt({"state": state, "transition": 2})
+    publish_mqtt({"state": state, "transition": 0.3})
     await asyncio.sleep(0.2)  # Allow state update to propagate
     return await get_status()
 
 @app.post("/brightness", response_model=LampStatus)
 async def set_brightness(request: BrightnessRequest):
     brightness = int(request.brightness * 254)
-    publish_mqtt({"state": "ON", "brightness": brightness, "transition": 2})
+    publish_mqtt({"state": "ON", "brightness": brightness, "transition": 0.3})
     await asyncio.sleep(0.2)
     return await get_status()
 
