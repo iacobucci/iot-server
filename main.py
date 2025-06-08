@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 import asyncio
 import json
-from fastapi import FastAPI, HTTPException, HTMLResponse
+from fastapi import FastAPI, HTTPException
+from fastapi.responses import HTMLResponse
 from pydantic import BaseModel, Field
 from typing import Optional
 import paho.mqtt.client as mqtt
@@ -71,7 +72,6 @@ mqtt_thread.start()
 app = FastAPI()
 
 HTML_PATH = "index.html"
-
 
 @app.get("/", response_class=HTMLResponse)
 def serve_page():
