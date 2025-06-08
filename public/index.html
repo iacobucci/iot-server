@@ -23,7 +23,7 @@
 <body>
 	<h1>Lampadina</h1>
 
-	<form method="post" action="/power">
+	<form method="get" action="/power">
 		<input type="hidden" name="form_toggle" value="1" />
 		<button type="submit">on/off</button>
 	</form>
@@ -32,7 +32,7 @@
 		<button type="submit">Stato</button>
 	</form>
 
-	<form method="post" action="/brightness">
+	<form method="get" action="/brightness">
 		<div>
 			<input type="range" name="brightness" step="0.1" min="0" max="1" value="0.5" />
 		</div>

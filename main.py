@@ -5,9 +5,11 @@ from threading import Thread
 from typing import Optional
 
 import paho.mqtt.client as mqtt
-from fastapi import Body, FastAPI, Form, HTTPException, Request
+from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
+from fastapi import Query
+from fastapi.responses import RedirectResponse
 
 # MQTT config
 MQTT_BROKER = "localhost"
@@ -87,59 +89,41 @@ async def get_status():
     )
 
 
-# @app.post("/power", response_model=LampStatus)
-# async def set_power(request: PowerRequest):
-#     state = "ON" if request.power else "OFF"
-#     publish_mqtt({"state": state, "transition": 0.3})
-#     await asyncio.sleep(0.2)  # Allow state update to propagate
-#     return await get_status()
-
-
 @app.post("/power", response_model=LampStatus)
-async def set_power(
-    request: Request,
-    form_toggle: Optional[str] = Form(None),
-    power_json: Optional[PowerRequest] = Body(None),
-):
-    if power_json is not None:
-        value = power_json.power
-    elif form_toggle is not None:
-        # Toggle current state
-        async with status_lock:
-            value = lamp_status.get("state") != "ON"
-    else:
-        raise HTTPException(status_code=400, detail="Missing power input")
-
-    state = "ON" if value else "OFF"
+async def set_power(request: PowerRequest):
+    state = "ON" if request.power else "OFF"
     publish_mqtt({"state": state, "transition": 0.3})
-    await asyncio.sleep(0.2)
+    await asyncio.sleep(0.2)  # Allow state update to propagate
     return await get_status()
-
-
-# @app.post("/brightness", response_model=LampStatus)
-# async def set_brightness(request: BrightnessRequest):
-#     brightness = int(request.brightness * 254)
-#     publish_mqtt({"state": "ON", "brightness": brightness, "transition": 0.3})
-#     await asyncio.sleep(0.2)
-#     return await get_status()
 
 
 @app.post("/brightness", response_model=LampStatus)
-async def set_brightness(
-    brightness_form: Optional[float] = Form(None),
-    request: Optional[BrightnessRequest] = Body(None),
-):
-    if request is not None:
-        brightness = request.brightness
-    elif brightness_form is not None:
-        brightness = brightness_form
-    else:
-        raise HTTPException(status_code=400, detail="Missing brightness")
-
-    brightness_val = int(brightness * 254)
-    publish_mqtt({"state": "ON", "brightness": brightness_val, "transition": 0.3})
+async def set_brightness(request: BrightnessRequest):
+    brightness = int(request.brightness * 254)
+    publish_mqtt({"state": "ON", "brightness": brightness, "transition": 0.3})
     await asyncio.sleep(0.2)
     return await get_status()
+
+@app.get("/power")
+async def toggle_power(form_toggle: int = Query(None)):
+    if form_toggle == 1:
+        # Ottieni lo stato attuale per fare il toggle
+        current_status = await get_status()
+        new_power = not current_status.power
+        
+        state = "ON" if new_power else "OFF"
+        publish_mqtt({"state": state, "transition": 0.3})
+        await asyncio.sleep(0.2)
+    
+    return RedirectResponse(url="/", status_code=302)
+
+@app.get("/brightness")
+async def set_brightness_get(brightness: float = Query(0.5)):
+    brightness_value = int(brightness * 254)
+    publish_mqtt({"state": "ON", "brightness": brightness_value, "transition": 0.3})
+    await asyncio.sleep(0.2)
+    
+    return RedirectResponse(url="/", status_code=302)
 
 
 def publish_mqtt(payload: dict, transition: Optional[float] = None):
