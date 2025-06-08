@@ -74,9 +74,6 @@ mqtt_thread.start()
 # FastAPI app
 app = FastAPI()
 
-app.mount("/", StaticFiles(directory="public", html=True), name="static")
-
-
 @app.get("/status", response_model=LampStatus)
 async def get_status():
     async with status_lock:
@@ -124,6 +121,8 @@ async def set_brightness_get(brightness: float = Query(0.5)):
     await asyncio.sleep(0.2)
     
     return RedirectResponse(url="/", status_code=302)
+
+app.mount("/", StaticFiles(directory="public", html=True), name="static")
 
 
 def publish_mqtt(payload: dict, transition: Optional[float] = None):
