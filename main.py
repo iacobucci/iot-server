@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 import asyncio
 import json
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, HTMLResponse
 from pydantic import BaseModel, Field
 from typing import Optional
 import paho.mqtt.client as mqtt
