@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+	<meta charset="UTF-8">
+	<title>Controllo Lampadina</title>
+	<style>
+		body {
+			font-family: sans-serif;
+			text-align: center;
+			margin-top: 40px;
+		}
+
+		button,
+		input {
+			font-size: 20px;
+			margin: 10px;
+			padding: 10px;
+		}
+	</style>
+</head>
+
+<body>
+	<h1>Lampadina</h1>
+
+	<form method="post" action="/power">
+		<input type="hidden" name="power" value="off" />
+		<button type="submit">Spegni</button>
+	</form>
+
+	<form method="get" action="/status">
+		<button type="submit">Stato</button>
+	</form>
+
+	<form method="post" action="/brightness">
+		<input type="number" name="brightness" min="0" max="1"/>
+		<button type="submit">Imposta Luminosità</button>
+	</form>
+</body>
+
+</html>
