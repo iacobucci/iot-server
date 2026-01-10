@@ -104,7 +104,7 @@ async def set_brightness(request: BrightnessRequest):
 @app.get("/increase_brightness", response_model=LampStatus)
 async def increase_brightness():
 	old_brightness = lamp_status.get("brightness")
-	new_brightness = old_brightness + 0.2 if old_brightness is not None else 0.8
+	new_brightness = old_brightness + (255/8) if old_brightness is not None else (255)
 	publish_mqtt({"state": "ON", "brightness": new_brightness, "transition": 0.3})
 	await asyncio.sleep(0.2)
 	return await get_status()
@@ -112,7 +112,7 @@ async def increase_brightness():
 @app.get("/decrease_brightness", response_model=LampStatus)
 async def increase_brightness():
 	old_brightness = lamp_status.get("brightness")
-	new_brightness = old_brightness - 0.2 if old_brightness is not None else 0.2
+	new_brightness = old_brightness - (255/8) if old_brightness is not None else (0)
 	publish_mqtt({"state": "ON", "brightness": new_brightness, "transition": 0.3})
 	await asyncio.sleep(0.2)
 	return await get_status()
