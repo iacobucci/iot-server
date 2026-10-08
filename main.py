@@ -6,8 +6,13 @@ import pty
 import select
 import sys
 import time
+from contextlib import asynccontextmanager
 from threading import Lock, Thread, Event
 from typing import Optional
+
+# Ensure all print statements are immediately flushed to terminal/systemd logs
+if hasattr(sys.stdout, "reconfigure"):
+	sys.stdout.reconfigure(line_buffering=True)
 
 import paho.mqtt.client as mqtt
 import serial
@@ -38,6 +43,11 @@ serial_lock = Lock()
 active_serial_conn = {"ser": None, "port": None, "last_command": None, "last_time": None}
 virtual_monitor_master_fd: Optional[int] = None
 stop_event = Event()
+
+# Background thread handles
+mqtt_thread: Optional[Thread] = None
+serial_thread: Optional[Thread] = None
+vmon_thread: Optional[Thread] = None
 
 
 # Request / Response models
@@ -87,11 +97,11 @@ def publish_mqtt(payload: dict, transition: Optional[float] = None):
 		client.loop_stop()
 		client.disconnect()
 	except Exception as e:
-		print(f"[MQTT] Publish error: {e}")
+		print(f"[MQTT] Publish error: {e}", flush=True)
 
 
 def on_connect(client, userdata, flags, rc, properties=None):
-	print(f"[MQTT] Connected to broker (code: {rc})")
+	print(f"[MQTT] Connected to broker (code: {rc})", flush=True)
 	client.subscribe(TOPIC_STATE)
 
 
@@ -103,9 +113,10 @@ def on_message(client, userdata, msg):
 				lamp_status["state"] = data["state"]
 			if "brightness" in data:
 				lamp_status["brightness"] = data["brightness"]
+		print(f"[MQTT] Lamp state updated: {data}", flush=True)
 		notify_serial_status()
 	except Exception as e:
-		print("[MQTT] Decode error:", e)
+		print(f"[MQTT] Decode error: {e}", flush=True)
 
 
 def start_mqtt_client():
@@ -117,8 +128,9 @@ def start_mqtt_client():
 			client.connect(MQTT_BROKER, MQTT_PORT, 60)
 			client.loop_forever()
 		except Exception as e:
-			print(f"[MQTT] Connection failed: {e}. Retrying in 5 seconds...")
-			time.sleep(5)
+			if not stop_event.is_set():
+				print(f"[MQTT] Connection failed: {e}. Retrying in 5 seconds...", flush=True)
+				time.sleep(5)
 
 
 # Lamp Action Functions
@@ -137,8 +149,10 @@ def notify_serial_status():
 		if ser and ser.is_open:
 			try:
 				ser.write(msg.encode())
+				ser.flush()
+				print(f"[Serial -> USB] Sent status: {msg.strip()}", flush=True)
 			except Exception as e:
-				print(f"[Serial] Failed to write status update: {e}")
+				print(f"[Serial] Failed to write status update: {e}", flush=True)
 
 	# Broadcast to virtual monitor PTY
 	broadcast_to_virtual_monitor(f"[STATUS] {msg.strip()}\r\n")
@@ -210,7 +224,7 @@ def process_serial_command(cmd: str, source: str = "Arduino-USB") -> str:
 		active_serial_conn["last_command"] = cmd
 		active_serial_conn["last_time"] = time.time()
 
-	print(f"[{source}] Command received: {cmd}")
+	print(f"[{source}] Signal received: '{cmd}'", flush=True)
 	cmd_upper = cmd.upper()
 
 	if cmd_upper in ("POWER", "TOGGLE", "POWER_TOGGLE", "P"):
@@ -270,13 +284,12 @@ def process_serial_command(cmd: str, source: str = "Arduino-USB") -> str:
 		except Exception as e:
 			response = f"ERROR JSON: {e}"
 	elif cmd_upper.startswith("READY"):
-		# Arduino announced reboot/startup
 		notify_serial_status()
 		response = "OK ARDUINO_READY"
 	else:
 		response = f"UNKNOWN_COMMAND: {cmd}"
 
-	print(f"[{source}] Result: {response}")
+	print(f"[{source}] Response: {response}", flush=True)
 	return response
 
 
@@ -310,19 +323,18 @@ def virtual_monitor_worker():
 			attrs[3] = attrs[3] & ~termios.ECHO
 			termios.tcsetattr(slave_fd, termios.TCSANOW, attrs)
 		except Exception as e:
-			print(f"[Virtual Monitor] termios notice: {e}")
+			print(f"[Virtual Monitor] termios notice: {e}", flush=True)
 
 		# Create / update symlink to slave pty
 		try:
 			if os.path.islink(VIRTUAL_MONITOR_PATH) or os.path.exists(VIRTUAL_MONITOR_PATH):
 				os.remove(VIRTUAL_MONITOR_PATH)
 			os.symlink(slave_name, VIRTUAL_MONITOR_PATH)
-			print(f"[Virtual Monitor] Available at: {VIRTUAL_MONITOR_PATH} -> {slave_name}")
-			print(f"[Virtual Monitor] Connect with: pio device monitor -p {VIRTUAL_MONITOR_PATH}")
+			print(f"[Virtual Monitor] Available at: {VIRTUAL_MONITOR_PATH} -> {slave_name}", flush=True)
+			print(f"[Virtual Monitor] Connect with: pio device monitor -p {VIRTUAL_MONITOR_PATH}", flush=True)
 		except Exception as e:
-			print(f"[Virtual Monitor] Symlink creation notice: {e} (slave device: {slave_name})")
+			print(f"[Virtual Monitor] Symlink creation notice: {e} (slave device: {slave_name})", flush=True)
 
-		# Greeting banner
 		welcome = (
 			"\r\n========================================\r\n"
 			" IoT Server - PlatformIO Monitor Bridge\r\n"
@@ -357,10 +369,9 @@ def virtual_monitor_worker():
 							os.write(master_fd, b"\b \b")
 					else:
 						input_buffer += char
-						# Echo back character
 						os.write(master_fd, char.encode())
 	except Exception as e:
-		print(f"[Virtual Monitor] Worker stopped: {e}")
+		print(f"[Virtual Monitor] Worker stopped: {e}", flush=True)
 	finally:
 		if virtual_monitor_master_fd is not None:
 			try:
@@ -384,45 +395,71 @@ def serial_worker():
 		if not os.path.exists(target_port):
 			now = time.time()
 			if now - last_error_log > 10.0:
-				print(f"[Serial] Waiting for Arduino USB device (target: {SERIAL_PORT})...")
+				print(f"[Serial] Waiting for Arduino USB device (target: {SERIAL_PORT})...", flush=True)
 				last_error_log = now
 			time.sleep(2)
 			continue
 
 		try:
-			print(f"[Serial] Connecting to Arduino on {target_port} at {SERIAL_BAUD} baud...")
-			with serial.Serial(target_port, SERIAL_BAUD, timeout=1.0) as ser:
-				print(f"[Serial] Connected to {target_port}!")
-				with serial_lock:
-					active_serial_conn["ser"] = ser
-					active_serial_conn["port"] = target_port
+			print(f"[Serial] Connecting to Arduino on {target_port} at {SERIAL_BAUD} baud...", flush=True)
+			ser = serial.Serial(
+				target_port,
+				SERIAL_BAUD,
+				timeout=0.2,
+				write_timeout=1.0,
+			)
+			# Assert DTR and RTS (critical for Arduino Uno R4 native USB CDC)
+			try:
+				ser.dtr = True
+				ser.rts = True
+			except Exception:
+				pass
 
-				# Announce connection and sync initial status
-				ser.write(f"CONNECTED\n{format_status_message()}".encode())
-				broadcast_to_virtual_monitor(f"[USB] Connected to physical Arduino on {target_port}\r\n")
+			print(f"[Serial] Connected to {target_port}!", flush=True)
 
-				while not stop_event.is_set():
-					try:
-						line_bytes = ser.readline()
-						if not line_bytes:
-							continue
-						line = line_bytes.decode(errors="replace").strip()
-						if not line:
-							continue
+			# Allow board to finish reset boot sequence
+			time.sleep(1.5)
+			ser.reset_input_buffer()
+			ser.reset_output_buffer()
 
-						broadcast_to_virtual_monitor(f"[ARDUINO -> SERVER] {line}\r\n")
-						resp = process_serial_command(line, source="Arduino-USB")
-						if resp:
-							ser.write((resp + "\n").encode())
-							broadcast_to_virtual_monitor(f"[SERVER -> ARDUINO] {resp}\r\n")
-					except (serial.SerialException, OSError) as e:
-						print(f"[Serial] Device error on {target_port}: {e}")
-						broadcast_to_virtual_monitor(f"[USB] Disconnected from {target_port}\r\n")
-						break
+			with serial_lock:
+				active_serial_conn["ser"] = ser
+				active_serial_conn["port"] = target_port
+
+			# Announce connection and sync initial status
+			ser.write(f"CONNECTED\n{format_status_message()}".encode())
+			ser.flush()
+			broadcast_to_virtual_monitor(f"[USB] Connected to physical Arduino on {target_port}\r\n")
+
+			# Non-blocking stream line accumulator
+			rx_buffer = bytearray()
+
+			while not stop_event.is_set():
+				try:
+					chunk = ser.read(ser.in_waiting or 1)
+					if chunk:
+						rx_buffer.extend(chunk)
+						while b"\n" in rx_buffer:
+							line_bytes, rx_buffer = rx_buffer.split(b"\n", 1)
+							line = line_bytes.decode(errors="replace").strip("\r\n \t")
+							if not line:
+								continue
+
+							broadcast_to_virtual_monitor(f"[ARDUINO -> SERVER] {line}\r\n")
+							resp = process_serial_command(line, source="Arduino-USB")
+							if resp:
+								ser.write((resp + "\n").encode())
+								ser.flush()
+								broadcast_to_virtual_monitor(f"[SERVER -> ARDUINO] {resp}\r\n")
+				except (serial.SerialException, OSError) as e:
+					print(f"[Serial] Device error on {target_port}: {e}", flush=True)
+					broadcast_to_virtual_monitor(f"[USB] Disconnected from {target_port}\r\n")
+					break
+			ser.close()
 		except Exception as e:
 			now = time.time()
 			if now - last_error_log > 10.0:
-				print(f"[Serial] Failed to connect to {target_port}: {e}")
+				print(f"[Serial] Failed to connect to {target_port}: {e}", flush=True)
 				last_error_log = now
 			time.sleep(2)
 		finally:
@@ -431,20 +468,50 @@ def serial_worker():
 				active_serial_conn["port"] = None
 
 
-# Background Threads Initialization
-mqtt_thread = Thread(target=start_mqtt_client, daemon=True)
-mqtt_thread.start()
+# Application Lifecycle Management
+def start_background_services():
+	global mqtt_thread, serial_thread, vmon_thread
+	stop_event.clear()
 
-serial_thread = Thread(target=serial_worker, daemon=True)
-serial_thread.start()
+	print("[Lifecycle] Starting background services...", flush=True)
+	mqtt_thread = Thread(target=start_mqtt_client, daemon=True, name="MQTT-Worker")
+	mqtt_thread.start()
 
-if ENABLE_VIRTUAL_MONITOR:
-	vmon_thread = Thread(target=virtual_monitor_worker, daemon=True)
-	vmon_thread.start()
+	serial_thread = Thread(target=serial_worker, daemon=True, name="Serial-Worker")
+	serial_thread.start()
+
+	if ENABLE_VIRTUAL_MONITOR:
+		vmon_thread = Thread(target=virtual_monitor_worker, daemon=True, name="VMon-Worker")
+		vmon_thread.start()
+
+
+def stop_background_services():
+	print("[Lifecycle] Stopping background services...", flush=True)
+	stop_event.set()
+	with serial_lock:
+		ser = active_serial_conn.get("ser")
+		if ser and ser.is_open:
+			try:
+				ser.close()
+			except Exception:
+				pass
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+	# Startup: Run background services exactly once in the active worker process
+	start_background_services()
+	yield
+	# Shutdown: Cleanly stop background services and release ports
+	stop_background_services()
 
 
 # FastAPI App
-app = FastAPI(title="IoT Server", description="FastAPI Zigbee IoT Server with USB Serial and HTTP Control")
+app = FastAPI(
+	title="IoT Server",
+	description="FastAPI Zigbee IoT Server with USB Serial and HTTP Control",
+	lifespan=lifespan,
+)
 
 
 @app.get("/status", response_model=LampStatus)
@@ -534,4 +601,6 @@ app.mount("/", StaticFiles(directory="public", html=True), name="static")
 if __name__ == "__main__":
 	import uvicorn
 
-	uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)
+	# Reload is disabled by default in production; enable with UVICORN_RELOAD=1 if needed
+	reload_enabled = os.getenv("UVICORN_RELOAD", "0").lower() in ("1", "true")
+	uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=reload_enabled)
