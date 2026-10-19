@@ -17,6 +17,7 @@ Commands sent by the Arduino (or typed into the monitor):
 | `POWER` / `TOGGLE` / `p` | Toggle lamp on/off | `{"state": "ON"/"OFF"}` |
 | `BRIGHTNESS_UP` / `+` | Increase brightness | `{"brightness": +51}` |
 | `BRIGHTNESS_DOWN` / `-` | Decrease brightness | `{"brightness": -51}` |
+| `RESTART` / `RESET` / `r` | Restart bulb service (Zigbee2MQTT) | Publishes restart request to `zigbee2mqtt/bridge/request/restart` |
 | `STATUS` / `?` | Request current status | Replies with `STATUS state=... brightness=...` |
 | `ON` / `OFF` | Explicit power on / off | `{"state": "ON"/"OFF"}` |
 | `BRIGHTNESS <0.0-1.0>` | Set specific brightness | `{"brightness": value}` |
@@ -49,6 +50,9 @@ You can monitor the serial communication and send test signals using PlatformIO 
 | `VIRTUAL_MONITOR_PATH` | `/tmp/iot-server-monitor` | Symlink path for virtual monitor |
 | `MQTT_BROKER` | `localhost` | MQTT broker host |
 | `MQTT_PORT` | `1883` | MQTT broker port |
+| `MQTT_TOPIC_RESTART` | `zigbee2mqtt/bridge/request/restart` | MQTT restart topic for Zigbee2MQTT |
+| `SERVICE_RESTART_TARGET` | `zigbee` | Target service to restart (`zigbee`, `iot-server`, `all`) |
+| `SERVICE_RESTART_METHOD` | `auto` | Restart method (`auto`, `docker`, `all`) |
 
 ## HTTP API
 
@@ -59,6 +63,8 @@ The HTTP server remains fully active for external devices, web dashboard, and au
 - `POST /brightness`: Body `{"brightness": 0.5}`
 - `GET /increase_brightness` / `GET /decrease_brightness`
 - `GET /power?form_toggle=1`: Toggle power (for simple web links/buttons)
+- `POST /restart`: Restart service (body `{"target": "zigbee"}`)
+- `GET /restart?form_restart=1`: Trigger service restart and redirect to `/`
 - `GET /serial/status`: Returns USB connection and monitor bridge status
 - `POST /serial/command`: Send a raw signal command via HTTP (`{"command": "POWER"}`)
 

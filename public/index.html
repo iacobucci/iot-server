@@ -32,6 +32,11 @@
 		<button type="submit">Stato</button>
 	</form>
 
+	<form method="get" action="/restart">
+		<input type="hidden" name="form_restart" value="1" />
+		<button type="submit">Riavvia Servizio</button>
+	</form>
+
 	<form method="get" action="/brightness">
 		<div>
 			<input type="range" name="brightness" step="0.1" min="0" max="1" value="0.5" />

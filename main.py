@@ -8,7 +8,7 @@ import sys
 import time
 from contextlib import asynccontextmanager
 from threading import Lock, Thread, Event
-from typing import Optional
+from typing import Optional, Union
 
 # Ensure all print statements are immediately flushed to terminal/systemd logs
 if hasattr(sys.stdout, "reconfigure"):
@@ -27,6 +27,11 @@ MQTT_BROKER = os.getenv("MQTT_BROKER", "localhost")
 MQTT_PORT = int(os.getenv("MQTT_PORT", "1883"))
 TOPIC_SET = os.getenv("MQTT_TOPIC_SET", "zigbee2mqtt/room/set")
 TOPIC_STATE = os.getenv("MQTT_TOPIC_STATE", "zigbee2mqtt/room")
+TOPIC_RESTART = os.getenv("MQTT_TOPIC_RESTART", "zigbee2mqtt/bridge/request/restart")
+
+# Service restart options
+SERVICE_RESTART_TARGET = os.getenv("SERVICE_RESTART_TARGET", "zigbee")
+SERVICE_RESTART_METHOD = os.getenv("SERVICE_RESTART_METHOD", "auto")
 
 # Serial / USB configuration
 SERIAL_PORT = os.getenv("SERIAL_PORT", "/dev/ttyACM0")
@@ -77,6 +82,10 @@ class SerialCommandRequest(BaseModel):
 	command: str
 
 
+class RestartRequest(BaseModel):
+	target: Optional[str] = "zigbee"
+
+
 # MQTT Helper
 def get_mqtt_client():
 	try:
@@ -86,18 +95,23 @@ def get_mqtt_client():
 		return mqtt.Client()
 
 
-def publish_mqtt(payload: dict, transition: Optional[float] = None):
-	if transition is not None:
-		payload["transition"] = transition
+def publish_mqtt(payload: Union[dict, str], topic: Optional[str] = None, transition: Optional[float] = None):
+	target_topic = topic or TOPIC_SET
+	if isinstance(payload, dict):
+		if transition is not None:
+			payload["transition"] = transition
+		msg = json.dumps(payload)
+	else:
+		msg = str(payload)
 	try:
 		client = get_mqtt_client()
 		client.connect(MQTT_BROKER, MQTT_PORT, 60)
 		client.loop_start()
-		client.publish(TOPIC_SET, json.dumps(payload))
+		client.publish(target_topic, msg)
 		client.loop_stop()
 		client.disconnect()
 	except Exception as e:
-		print(f"[MQTT] Publish error: {e}", flush=True)
+		print(f"[MQTT] Publish error on topic '{target_topic}': {e}", flush=True)
 
 
 def on_connect(client, userdata, flags, rc, properties=None):
@@ -214,6 +228,50 @@ def action_set_brightness(brightness_float: float):
 	notify_serial_status()
 
 
+def action_restart_service(target: Optional[str] = None):
+	target = (target or SERVICE_RESTART_TARGET).lower()
+	print(f"[Service] Restart triggered for target '{target}'...", flush=True)
+	broadcast_to_virtual_monitor(f"[SERVICE] Restarting service ({target})...\r\n")
+
+	restarted = False
+	if target in ("zigbee", "all"):
+		# 1. Native Zigbee2MQTT restart via MQTT bridge request
+		try:
+			publish_mqtt("", topic=TOPIC_RESTART)
+			restarted = True
+			print(f"[Service] Sent MQTT restart command to {TOPIC_RESTART}", flush=True)
+		except Exception as e:
+			print(f"[Service] MQTT restart error: {e}", flush=True)
+
+		# 2. Docker restart fallback if MQTT failed or if docker method is explicitly set
+		restart_method = SERVICE_RESTART_METHOD.lower()
+		if restart_method in ("docker", "all") or (restart_method == "auto" and not restarted):
+			import subprocess
+			try:
+				res = subprocess.run(
+					["docker", "restart", "zigbee2mqtt"],
+					capture_output=True,
+					text=True,
+					timeout=15,
+				)
+				if res.returncode == 0:
+					print("[Service] Restarted zigbee2mqtt container via docker", flush=True)
+					restarted = True
+				else:
+					print(f"[Service] docker restart notice: {res.stderr.strip()}", flush=True)
+			except Exception as e:
+				print(f"[Service] docker restart error: {e}", flush=True)
+
+	if target in ("iot-server", "all"):
+		print("[Service] Scheduling restart of iot-server process...", flush=True)
+
+		def _delayed_exit():
+			time.sleep(0.5)
+			os._exit(0)
+
+		Thread(target=_delayed_exit, daemon=True, name="Process-Restart").start()
+
+
 # Serial Protocol Command Dispatcher
 def process_serial_command(cmd: str, source: str = "Arduino-USB") -> str:
 	cmd = cmd.strip()
@@ -248,6 +306,9 @@ def process_serial_command(cmd: str, source: str = "Arduino-USB") -> str:
 		with status_lock:
 			b = lamp_status.get("brightness")
 		response = f"OK BRIGHTNESS_DECREASED (brightness={b})"
+	elif cmd_upper in ("RESTART", "RESET", "RESTART_SERVICE", "REBOOT", "R"):
+		action_restart_service()
+		response = "OK RESTART"
 	elif cmd_upper in ("STATUS", "UPDATE", "GET_STATUS", "?"):
 		response = format_status_message().strip()
 	elif cmd_upper.startswith("BRIGHTNESS"):
@@ -280,6 +341,8 @@ def process_serial_command(cmd: str, source: str = "Arduino-USB") -> str:
 					action_increase_brightness()
 				elif act in ("DOWN", "DECREASE_BRIGHTNESS", "BRIGHTNESS_DOWN"):
 					action_decrease_brightness()
+				elif act in ("RESTART", "RESET", "REBOOT"):
+					action_restart_service()
 			response = "OK JSON processed"
 		except Exception as e:
 			response = f"ERROR JSON: {e}"
@@ -338,8 +401,8 @@ def virtual_monitor_worker():
 		welcome = (
 			"\r\n========================================\r\n"
 			" IoT Server - PlatformIO Monitor Bridge\r\n"
-			" Commands: POWER, BRIGHTNESS_UP, BRIGHTNESS_DOWN, STATUS\r\n"
-			" Shortcuts: p, +, -, ?\r\n"
+			" Commands: POWER, BRIGHTNESS_UP, BRIGHTNESS_DOWN, RESTART, STATUS\r\n"
+			" Shortcuts: p, +, -, r, ?\r\n"
 			"========================================\r\n"
 		)
 		os.write(master_fd, welcome.encode())
@@ -567,6 +630,22 @@ async def set_brightness_get(brightness: float = Query(0.5)):
 	action_set_brightness(brightness)
 	time.sleep(0.2)
 	return RedirectResponse(url="/", status_code=302)
+
+
+@app.post("/restart")
+async def restart_service(request: Optional[RestartRequest] = None):
+	target = request.target if request else None
+	action_restart_service(target=target)
+	return {"status": "ok", "message": f"Service restart triggered ({target or SERVICE_RESTART_TARGET})"}
+
+
+@app.get("/restart")
+async def restart_service_get(form_restart: int = Query(None), target: str = Query("zigbee")):
+	action_restart_service(target=target)
+	if form_restart == 1:
+		time.sleep(0.3)
+		return RedirectResponse(url="/", status_code=302)
+	return {"status": "ok", "message": f"Service restart triggered ({target})"}
 
 
 # Serial Management Endpoints
